@@ -1,7 +1,12 @@
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
+import numpy as np
+from matplotlib.animation import FuncAnimation
+from matplotlib.font_manager import FontProperties
+from matplotlib.ticker import FixedLocator
+
+
+plt.switch_backend('agg')
 
 column_names = [
     "id",
@@ -20,50 +25,84 @@ column_names = [
 
 df = pd.read_csv(r'C:\Users\Ben\Desktop\Everything\programs\charts\responses.csv', header=None, names=column_names)
 
-df['item_1_price_ending'] = np.round((df['item_1_fake_price'] % 1) * 100).astype(int)
-df['item_2_price_ending'] = np.round((df['item_2_fake_price'] % 1) * 100).astype(int)
+item_1_price_ending = df['item_1_fake_price'] % 1
+item_2_price_ending = df['item_2_fake_price'] % 1
 
-def get_selection_rates(df, max_id):
-    df_filtered = df[df['id'] <= max_id].copy()
+def make_color(color):
+    return tuple([(i/255) for i in color])
 
-    selected_counts = df_filtered[df_filtered['selected_item'].isin([1, 2])].apply(
-        lambda x: f'item_{x["selected_item"]}_price_ending', axis=1
-    )
+def fade_color(start_color, end_color, val, next_val, max_diff):
+    diff = abs(val - next_val)
+    factor = diff / max_diff
+    return tuple([start_color[i] + (end_color[i] - start_color[i]) * factor for i in range(len(start_color))])
+
+COL1 = make_color((150, 216, 232))
+COL2 = make_color((5, 62, 76))
+
+
+def update(num, counter_selected, counter_ignored):
+    plt.cla()
+
+    selected_item, item1_id, item2_id, item_1_fake_price, item_2_fake_price = df.loc[num, ['selected_item', 'item1_id', 'item2_id', 'item_1_fake_price', 'item_2_fake_price']]
+
+    if selected_item == item1_id:
+        selected = int(round((item_1_fake_price % 1) * 100))
+        ignored = int(round((item_2_fake_price % 1) * 100))
+    else:
+        selected = int(round((item_2_fake_price % 1) * 100))
+        ignored = int(round((item_1_fake_price % 1) * 100))
+
+    counter_selected[selected] += 1
+    counter_ignored[ignored] += 1
+
+    # Using np.divide to avoid division by zero
+    selection_rates = np.divide(counter_selected, counter_selected + counter_ignored, where=(counter_selected + counter_ignored) != 0)
+
+    # Update the bar colors based on selection_rates
+    bar_colors = get_bar_colors(selection_rates)
+
+    font = {'family': 'sans-serif', 'weight': 'regular', 'size': 40, 'color': make_color((0, 0, 0))}
+    tick_font = FontProperties(family='sans-serif', weight='regular', size='10')
+    ax.bar(np.arange(100), selection_rates, color=bar_colors, width=0.9)
+    ax.set_xlabel('Price Ending', fontsize=15, fontdict=font)
+    ax.set_ylabel('Selection Rate', fontsize=15, fontdict=font)
+    ax.tick_params(axis='both', which='both', colors=make_color((38, 38, 38)))
+    ax.set_ylim(0, 1)
+    ax.set_xticks(range(100))
+    ax.set_xticklabels([f'.{label:02}' if i % 10 == 0 else '' for i, label in enumerate(range(100))], fontproperties=tick_font)
+    yticks = ax.get_yticks()
+    ax.yaxis.set_major_locator(FixedLocator(yticks))
+    ax.set_yticklabels([f'{y:.1f}' for y in yticks], fontproperties=tick_font)
+
+
+    ax.set_facecolor(make_color((255, 255, 255)))
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    # response_num = num + 1  # Adjust for zero-based indexing
+    plt.title(f'Selection Rate after {num+1} responses')
+
+
+def get_bar_colors(selection_rates):
+    heights = selection_rates
+    diffs = [abs(heights[i] - heights[i+1]) for i in range(len(heights)-1)]
+    max_diff = max(diffs)
+
+    bar_colors = []
+    for i in range(len(heights)-1):
+        color = fade_color(COL1, COL2, heights[i], heights[i+1], max_diff)
+        bar_colors.append(color)
+
+    # Calculate the color for the last bar based on the difference between the first and the last bar
+    last_color = fade_color(COL1, COL2, heights[-1], heights[0], max_diff)
+    bar_colors.append(last_color)
     
-    selected_counts = pd.concat([selected_counts, df_filtered.loc[selected_counts.index, 'selected_item']], axis=1)
-    selected_counts.columns = ['item', 'selected_item']
-    
-    selected_counts = selected_counts.groupby(['item', 'selected_item']).size().reset_index(name='counts')
-    selected_counts.set_index('item', inplace=True)
+    return bar_colors
 
-    total_presented_1 = df_filtered.groupby(np.round(df_filtered['item_1_price_ending'])).size()
-    total_presented_2 = df_filtered.groupby(np.round(df_filtered['item_2_price_ending'])).size()
-    total_presented = total_presented_1.add(total_presented_2, fill_value=0)
-
-    selection_rates = selected_counts['counts'].divide(total_presented, fill_value=0)
-    return selection_rates
-
-
-
-
-fig, ax = plt.subplots()
-price_endings = list(range(0, 100))
-bar_container = ax.bar(price_endings, np.zeros(len(price_endings)))
-
-ax.set_title('Price Ending Selection Rates Over Time')
-ax.set_xlabel('Price Ending')
-ax.set_ylabel('Selection Rate')
-ax.set_ylim([0, 1])
-
-def update_bar_heights(selection_rates):
-    for idx, bar in enumerate(bar_container):
-        bar.set_height(selection_rates.get(idx, 0))
-
-def animate(i):
-    max_id = i + 1
-    selection_rates = get_selection_rates(df, max_id)
-    update_bar_heights(selection_rates)
-
-ani = animation.FuncAnimation(fig, animate, frames=len(df), interval=100, repeat=False)
-
-plt.show()
+counter_selected = np.zeros(100)
+counter_ignored = np.zeros(100)
+num_responses = len(df)
+fig, ax = plt.subplots(facecolor=make_color((255, 255, 255)))
+fig.subplots_adjust(left=0.10, bottom=0.10)
+ani = FuncAnimation(fig, update, frames=range(num_responses), fargs=(counter_selected, counter_ignored), repeat=False, blit=False, interval=100)
+# ani.save('animation.mp4', writer='ffmpeg', fps=30)
